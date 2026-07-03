@@ -9,7 +9,7 @@ from telethon.errors import PersistentTimestampOutdatedError, FloodWaitError
 # ===================== تنظیمات اصلی =====================
 API_ID = 2040
 API_HASH = "b18441a1ff607e10a989891a5462e627"
-
+print("test")
 GROUP_ID = -1003979242735
 
 EXTRA_GROUPS = [
@@ -34,10 +34,21 @@ FISHING_INTERVAL_SECONDS = 55 * 60
 FISHING_TEXT = "ماهی"
 SELL_FISH_BUTTON = "فروش ماهی"
 GIVE_TO_CAT_BUTTON = "بده پیشی بخوره"
-STOMACH_THRESHOLD = 4  # زیر 8 → بده پیشی بخوره | 8 به بالا → فروش ماهی
+STOMACH_THRESHOLD = 8  # زیر 8 → بده پیشی بخوره | 8 به بالا → فروش ماهی
 
 # ---- دکمه نجات پیشی ----
 RESCUE_BUTTON_TEXT = "نجات پیشی خیابونی "
+
+# ---- تنظیمات بخش "میوهام" + انتقال میو پوینت ----
+MEOWHAM_INTERVAL_SECONDS = 60 * 60
+MEOWHAM_TEXT = "میوهام"
+TRANSFER_TARGET_USERNAME = "@Tung_Suhur"
+WAIT_FOR_PROFILE_SECONDS = 15
+
+# ---- تنظیمات بخش پیام وضعیت به آیدی خاص ----
+STATUS_DM_INTERVAL_SECONDS = 2 * 60 * 60
+STATUS_DM_TARGET_USER_ID = 7196274489
+STATUS_DM_TEXT = "سلف فعال است✅"
 # ==========================================================
 
 client = TelegramClient(SESSION_NAME, API_ID, API_HASH)
@@ -106,7 +117,7 @@ def set_stomach(value: int):
 def seconds_until_next(key: str, interval: float) -> float:
     last = get_last_run(key)
     if last == 0.0:
-        return 0.0
+        return 5.0
     elapsed = time.time() - last
     remaining = interval - elapsed
     return max(0.0, remaining)
@@ -158,6 +169,20 @@ def parse_stomach(text: str):
     match = re.search(r"شکم\s*:.*?`(\d+)`\s*/\s*`\d+`", text)
     if match:
         return int(match.group(1))
+    return None
+
+
+def parse_meow_points(text: str):
+    """
+    از متن پیام پروفایل، عدد مقابل «💰 میو پوینت ها :» رو استخراج میکنه.
+    مثال: 💰 میو پوینت ها : `86,405` 🪙  (عدد داخل بک‌تیک هم پشتیبانی میشه)
+    ویرگول‌های احتمالی داخل عدد حذف میشن و مقدار به صورت int برگردونده میشه.
+    """
+    match = re.search(r"میو\s*پوینت\s*ها\s*:\s*`?([\d,]+)`?", text)
+    if match:
+        raw_number = match.group(1).replace(",", "")
+        if raw_number.isdigit():
+            return int(raw_number)
     return None
 
 
@@ -302,6 +327,111 @@ async def send_fishing_loop():
         await asyncio.sleep(FISHING_INTERVAL_SECONDS)
 
 
+async def send_meowham_and_transfer_loop():
+    """
+    هر MEOWHAM_INTERVAL_SECONDS یکبار:
+    1) پیام «میوهام» ارسال میشه.
+    2) منتظر پیام پروفایل از TARGET_BOT میمونه.
+    3) عدد مقابل «💰 میو پوینت ها :» استخراج و ذخیره میشه.
+    4) بلافاصله پیام «انتقال میویی [عدد] @Tung_Suhur» ارسال میشه.
+    """
+    wait = seconds_until_next("meowham", MEOWHAM_INTERVAL_SECONDS)
+    if wait > 0:
+        print(f"[~] میوهام: {wait:.0f} ثانیه مونده...")
+        await asyncio.sleep(wait)
+
+    while True:
+        try:
+            ok = await safe_send(GROUP_ID, MEOWHAM_TEXT)
+            if ok:
+                set_last_run("meowham", time.time())
+                print(f"[+] پیام '{MEOWHAM_TEXT}' ارسال شد. منتظر پروفایل...")
+
+            meow_points = None
+            elapsed = 0
+            while elapsed < WAIT_FOR_PROFILE_SECONDS and meow_points is None:
+                await asyncio.sleep(1)
+                elapsed += 1
+                messages = await safe_iter_messages(GROUP_ID, limit=5)
+                for msg in messages:
+                    if msg.sender_id is None:
+                        continue
+                    sender = await msg.get_sender()
+                    if not is_target_bot(msg, sender):
+                        continue
+
+                    msg_text = msg.text or ""
+                    extracted = parse_meow_points(msg_text)
+                    if extracted is not None:
+                        meow_points = extracted
+                        print(f"[i] میو پوینت استخراج شد: {meow_points}")
+                        break
+
+            if meow_points is not None:
+                transfer_text = f"انتقال میویی {meow_points} {TRANSFER_TARGET_USERNAME}"
+                sent_transfer_msg = await client.send_message(GROUP_ID, transfer_text)
+                sent_at = sent_transfer_msg.id
+                print(f"[+] پیام انتقال ارسال شد: {transfer_text}")
+
+                # منتظر پیام جدید از بات با اینلاین باتن میمونیم
+                clicked = False
+                elapsed = 0
+                while elapsed < WAIT_FOR_BUTTON_SECONDS and not clicked:
+                    await asyncio.sleep(1)
+                    elapsed += 1
+                    messages = await safe_iter_messages(GROUP_ID, limit=5)
+                    for msg in messages:
+                        # فقط پیام‌هایی که بعد از پیام خودمون اومدن رو بررسی کن
+                        if msg.id <= sent_at:
+                            continue
+                        if msg.sender_id is None or not msg.buttons:
+                            continue
+                        sender = await msg.get_sender()
+                        if not is_target_bot(msg, sender):
+                            continue
+
+                        try:
+                            await msg.click(0, 0)
+                            print("[+] دکمه تایید انتقال (پیام جدید بات) زده شد.")
+                            clicked = True
+                        except Exception as e:
+                            print(f"[!] خطا در کلیک دکمه پیام انتقال: {e}")
+                        break
+
+                if not clicked:
+                    print("[!] پیام جدید بات با دکمه تایید انتقال پیدا نشد.")
+            else:
+                print("[!] پیام پروفایل پیدا نشد یا فرمت عوض شده؛ انتقال این دور انجام نشد.")
+        except Exception as e:
+            print(f"[!] خطا در حلقه میوهام/انتقال: {e}")
+
+        await asyncio.sleep(MEOWHAM_INTERVAL_SECONDS)
+
+
+async def send_status_dm_loop():
+    """
+    هر STATUS_DM_INTERVAL_SECONDS یکبار به STATUS_DM_TARGET_USER_ID
+    پیام خصوصی STATUS_DM_TEXT ارسال میکنه.
+    """
+    wait = seconds_until_next("status_dm", STATUS_DM_INTERVAL_SECONDS)
+    if wait > 0:
+        print(f"[~] پیام وضعیت: {wait:.0f} ثانیه مونده...")
+        await asyncio.sleep(wait)
+
+    while True:
+        try:
+            ok = await safe_send(STATUS_DM_TARGET_USER_ID, STATUS_DM_TEXT)
+            if ok:
+                set_last_run("status_dm", time.time())
+                print(f"[+] پیام وضعیت به {STATUS_DM_TARGET_USER_ID} ارسال شد.")
+            else:
+                print(f"[!] ارسال پیام وضعیت ناموفق بود.")
+        except Exception as e:
+            print(f"[!] خطا در حلقه پیام وضعیت: {e}")
+
+        await asyncio.sleep(STATUS_DM_INTERVAL_SECONDS)
+
+
 # ===================== Rescue Listener (همه گروه‌ها) =====================
 
 async def rescue_listener():
@@ -366,6 +496,8 @@ async def main():
         send_meow_loop(),
         send_pishi_and_click_loop(),
         send_fishing_loop(),
+        send_meowham_and_transfer_loop(),
+        send_status_dm_loop(),
         rescue_listener(),
     )
 
