@@ -25,7 +25,7 @@ MEOW_CHOICES = ["میو", "مع", "معو", "میو میو"]
 
 # ---- تنظیمات بخش "پیشی" + کلیک روی دکمه ----
 PISHI_INTERVAL_SECONDS = 40 * 60
-PISHI_TEXT = "خر"
+PISHI_TEXT = "پیشی"
 BUTTON_TEXT = "برداشت میو پوینت ها"
 WAIT_FOR_BUTTON_SECONDS = 15
 
