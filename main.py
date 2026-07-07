@@ -16,16 +16,16 @@ EXTRA_GROUPS = [
 ]
 
 SESSION_NAME = "my_account_session"
-DB_FILE = "timers.db"
+DB_FILE      = "data/timers.db"
 
+TARGET_BOTS = {"MeowieQBot", "MeowieeQBot", "MeowieeeQBot", "MeowieQIVBot", "MeowieQVBot"}
 # ---- تنظیمات بخش رندوم میو ----
 MEOW_INTERVAL_SECONDS = 285
 MEOW_CHOICES = ["میو", "مع", "معو", "میو میو"]
 
 # ---- تنظیمات بخش "پیشی" + کلیک روی دکمه ----
 PISHI_INTERVAL_SECONDS = 40 * 60
-PISHI_TEXT = "پیشی"
-TARGET_BOT = "@MeowieQBot"
+PISHI_TEXT = "خر"
 BUTTON_TEXT = "برداشت میو پوینت ها"
 WAIT_FOR_BUTTON_SECONDS = 15
 
@@ -187,12 +187,8 @@ def parse_meow_points(text: str):
 
 
 def is_target_bot(msg, sender) -> bool:
-    sender_username = getattr(sender, "username", None)
-    return (
-        str(msg.sender_id) == str(TARGET_BOT).lstrip("@")
-        or (sender_username and f"@{sender_username}" == TARGET_BOT)
-    )
-
+    uname = getattr(sender, "username", None)
+    return bool(uname) and uname in TARGET_BOTS
 
 # ===================== حلقه‌های اصلی =====================
 
